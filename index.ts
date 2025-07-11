@@ -4,6 +4,7 @@ import { AddressLookupTableAccount, ComputeBudgetProgram, PublicKey, SystemProgr
 import axios from "axios";
 import { adminFeeBps, adminPubkey, connection, jitoTipAccounts, JUPITER_PROGRAM, payer, REF_PROGRAM, referralPubkey, totalFeeBps } from "./config";
 import { sendTxsUsingJito } from "./jito";
+import { createTransferInstruction } from "@solana/spl-token";
 
 const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 const USDC_Mint = new PublicKey(USDC)
@@ -212,12 +213,50 @@ const USDT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
 const jitoTipLamports = 100_000;
 
 const main = async (inputMint: string, outputMint: string, inputAmount: number) => {
+    if (inputMint === outputMint) {
+        console.log("Input and output mints must be different!");
+        return;
+    }
     const totalFeeAmount = Math.floor(inputAmount * Number(totalFeeBps) / 10000);
     const inputAmountWithoutFee = inputAmount - totalFeeAmount;
     const latestBlockhash = await connection.getLatestBlockhash("confirmed")
-    const swapFeeTx = await swapFeeToUsdcTx(inputMint, totalFeeAmount, latestBlockhash.blockhash)
-    const swapMainTx = await swapViaJupiterTx(inputMint, outputMint, inputAmountWithoutFee, latestBlockhash.blockhash)
-    if (swapFeeTx && swapMainTx) {
+
+    let swapFeeTx: VersionedTransaction | null = null;
+    let feeIxs: TransactionInstruction[] = [];
+    if (inputMint !== USDC) {
+        swapFeeTx = await swapFeeToUsdcTx(inputMint, totalFeeAmount, latestBlockhash.blockhash)
+    } else {
+        // SPL transfer комиссии, если inputMint === USDC
+        const payerUsdcAta = getAssociatedTokenAddressSync(USDC_Mint, payer.publicKey);
+        const adminUsdcAta = getAssociatedTokenAddressSync(USDC_Mint, adminPubkey);
+        const referralUsdcAta = getAssociatedTokenAddressSync(USDC_Mint, referralPubkey);
+        // adminFeeBps из totalFeeBps — остальное referral
+        const adminAmount = Math.floor(totalFeeAmount * Number(adminFeeBps) / Number(totalFeeBps));
+        const referralAmount = totalFeeAmount - adminAmount;
+        if (adminAmount > 0) {
+            feeIxs.push(createTransferInstruction(payerUsdcAta, adminUsdcAta, payer.publicKey, adminAmount));
+        }
+        if (referralAmount > 0) {
+            feeIxs.push(createTransferInstruction(payerUsdcAta, referralUsdcAta, payer.publicKey, referralAmount));
+        }
+    }
+    // Получаем swap инструкции
+    let swapMainTx: VersionedTransaction | null = await swapViaJupiterTx(inputMint, outputMint, inputAmountWithoutFee, latestBlockhash.blockhash)
+    let feeTx: VersionedTransaction | null = null;
+    // Если есть feeIxs, создаём отдельную транзакцию для комиссии
+    if (feeIxs.length > 0) {
+        const feeMsg = new TransactionMessage({
+            payerKey: payer.publicKey,
+            recentBlockhash: latestBlockhash.blockhash,
+            instructions: [
+                ComputeBudgetProgram.setComputeUnitLimit({ units: 500_000 }),
+                ...feeIxs
+            ]
+        }).compileToV0Message([]);
+        feeTx = new VersionedTransaction(feeMsg);
+        feeTx.sign([payer]);
+    }
+    if ((swapFeeTx || inputMint === USDC) && swapMainTx) {
         const jitoTx = new VersionedTransaction(new TransactionMessage({
             payerKey: payer.publicKey, recentBlockhash: latestBlockhash.blockhash, instructions: [
                 SystemProgram.transfer({
@@ -229,16 +268,18 @@ const main = async (inputMint: string, outputMint: string, inputAmount: number) 
         }).compileToV0Message())
         jitoTx.sign([payer])
         const simul = await connection.simulateTransaction(jitoTx, { replaceRecentBlockhash: true })
-        // console.log(JSON.stringify(simul.value.logs, null, 2))
         console.log(`jitoTx: ${simul.value.unitsConsumed}`)
         if (simul.value.err) {
             console.log(simul.value.err)
             return
         }
-        await sendTxsUsingJito([jitoTx, swapFeeTx, swapMainTx])
+        // Фильтруем null и undefined
+        const txs: VersionedTransaction[] = [jitoTx, feeTx, swapFeeTx, swapMainTx].filter((tx): tx is VersionedTransaction => !!tx);
+        const result = await sendTxsUsingJito(txs);
+        console.log('sendTxsUsingJito result:', result);
     } else {
         console.log(`Error while making transactions.`)
     }
 }
 
-main(WIF, USDT, 1000000)
+main(USDC, WIF, 1000000)

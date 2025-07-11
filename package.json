@@ -12,7 +12,7 @@
   "dependencies": {
     "@jup-ag/api": "^6.0.41",
     "@solana/spl-token": "^0.4.13",
-    "@solana/web3.js": "^1.98.1",
+    "@solana/web3.js": "^1.98.2",
     "@types/bn.js": "^5.1.6",
     "@types/bs58": "^5.0.0",
     "axios": "^1.8.4",

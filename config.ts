@@ -31,7 +31,7 @@ export const totalFeeBps = serverConfig.TOTAL_FEE_BPS;
 
 export const JUPITER_PROGRAM = new PublicKey("JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4")
 
-export const REF_PROGRAM = new PublicKey("refbboVscic9xb6FCLZyzZ9T6pEeiYyDVvyjetQa4BB")
+export const REF_PROGRAM = new PublicKey("H99bxmTnCY3iEt5pXKxjPpGh4YDrKd3JNBddpPaddfM4")
 
 export const jitoUrls = [
     "https://mainnet.block-engine.jito.wtf",
